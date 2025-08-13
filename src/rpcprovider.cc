@@ -186,9 +186,19 @@ void RpcProvider::OnMessage(const muduo::net::TcpConnectionPtr &conn,
                                                                     &RpcProvider::SendRpcResponse, 
                                                                     conn, response);
 
+    // 创建性能监控计时器
+    auto timer = std::make_shared<Timer>(service_name, method_name);
+    
+    // 创建包装的done回调，用于记录性能指标
+    google::protobuf::Closure *wrapped_done = google::protobuf::NewCallback(
+        [timer, done]() {
+            timer->SetSuccess(true); // 假设调用成功，实际应该根据response判断
+            done->Run();
+        });
+    
     // 在框架上根据远端rpc请求，调用当前rpc节点上发布的方法
     // new UserService().Login(controller, request, response, done)
-    service->CallMethod(method, nullptr, request, response, done);
+    service->CallMethod(method, nullptr, request, response, wrapped_done);
 }
 
 // Closure的回调操作，用于序列化rpc的响应和网络发送

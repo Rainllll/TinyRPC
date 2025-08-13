@@ -10,6 +10,8 @@
 #include "mprpcapplication.h"
 #include "mprpccontroller.h"
 #include "zookeeperutil.h"
+#include "connectionpool.h"
+#include "memorypool.h"
 
 /*
 header_size + service_name method_name args_size + args
@@ -71,19 +73,6 @@ void MprpcChannel::CallMethod(const google::protobuf::MethodDescriptor* method,
     std::cout << "args_str: " << args_str << std::endl; 
     std::cout << "============================================" << std::endl;
 
-    // 使用tcp编程，完成rpc方法的远程调用
-    int clientfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (-1 == clientfd)
-    {
-        char errtxt[512] = {0};
-        sprintf(errtxt, "create socket error! errno:%d", errno);
-        controller->SetFailed(errtxt);
-        return;
-    }
-
-    // 读取配置文件rpcserver的信息
-    // std::string ip = MprpcApplication::GetInstance().GetConfig().Load("rpcserverip");
-    // uint16_t port = atoi(MprpcApplication::GetInstance().GetConfig().Load("rpcserverport").c_str());
     // rpc调用方想调用service_name的method_name服务，需要查询zk上该服务所在的host信息
     ZkClient zkCli;
     zkCli.Start();
@@ -102,40 +91,41 @@ void MprpcChannel::CallMethod(const google::protobuf::MethodDescriptor* method,
         controller->SetFailed(method_path + " address is invalid!");
         return;
     }
-    std::string ip = host_data.substr(0, idx);
-    uint16_t port = atoi(host_data.substr(idx+1, host_data.size()-idx).c_str()); 
 
-    struct sockaddr_in server_addr;
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    server_addr.sin_addr.s_addr = inet_addr(ip.c_str());
-
-    // 连接rpc服务节点
-    if (-1 == connect(clientfd, (struct sockaddr*)&server_addr, sizeof(server_addr)))
+    // 使用连接池获取连接
+    auto& pool = ConnectionPool::GetInstance();
+    auto conn = pool.GetConnection(host_data);
+    if (!conn)
     {
-        close(clientfd);
-        char errtxt[512] = {0};
-        sprintf(errtxt, "connect error! errno:%d", errno);
-        controller->SetFailed(errtxt);
+        controller->SetFailed("Failed to get connection from pool!");
         return;
     }
+
+    int clientfd = conn->GetFd();
 
     // 发送rpc请求
     if (-1 == send(clientfd, send_rpc_str.c_str(), send_rpc_str.size(), 0))
     {
-        close(clientfd);
         char errtxt[512] = {0};
         sprintf(errtxt, "send error! errno:%d", errno);
         controller->SetFailed(errtxt);
         return;
     }
 
-    // 接收rpc请求的响应值
-    char recv_buf[1024] = {0};
-    int recv_size = 0;
-    if (-1 == (recv_size = recv(clientfd, recv_buf, 1024, 0)))
+    // 使用内存池分配接收缓冲区
+    const size_t recv_buf_size = 8192; // 增大缓冲区
+    MemoryGuard recv_guard(recv_buf_size);
+    char* recv_buf = static_cast<char*>(recv_guard.Get());
+    if (!recv_buf)
     {
-        close(clientfd);
+        controller->SetFailed("Failed to allocate receive buffer!");
+        return;
+    }
+
+    // 接收rpc请求的响应值
+    int recv_size = 0;
+    if (-1 == (recv_size = recv(clientfd, recv_buf, recv_buf_size, 0)))
+    {
         char errtxt[512] = {0};
         sprintf(errtxt, "recv error! errno:%d", errno);
         controller->SetFailed(errtxt);
@@ -143,16 +133,14 @@ void MprpcChannel::CallMethod(const google::protobuf::MethodDescriptor* method,
     }
 
     // 反序列化rpc调用的响应数据
-    // std::string response_str(recv_buf, 0, recv_size); // bug出现问题，recv_buf中遇到\0后面的数据就存不下来了，导致反序列化失败
-    // if (!response->ParseFromString(response_str))
     if (!response->ParseFromArray(recv_buf, recv_size))
     {
-        close(clientfd);
         char errtxt[512] = {0};
         sprintf(errtxt, "parse error! response_str:%s", recv_buf);
         controller->SetFailed(errtxt);
         return;
     }
 
-    close(clientfd);
+    // 归还连接到连接池
+    pool.ReturnConnection(conn);
 }

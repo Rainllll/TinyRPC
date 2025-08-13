@@ -8,7 +8,10 @@ set(SRC_LIST
     mprpcchannel.cc        # 自定义RPC通信通道
     mprpccontroller.cc     # RPC控制器实现
     logger.cc              # 日志模块
-    zookeeperutil.cc)      # ZooKeeper客户端工具
+    zookeeperutil.cc       # ZooKeeper客户端工具
+    connectionpool.cc      # 连接池实现
+    memorypool.cc          # 内存池实现
+    metrics.cc)            # 性能监控实现
 
 # 创建静态库目标（mprpc为库名称）
 add_library(mprpc ${SRC_LIST})
