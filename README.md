@@ -365,9 +365,8 @@ top -p $(pgrep tinyrpc)
 ## 📞 联系我们
 
 - **作者**: Rainllll
-- **邮箱**: your.email@example.com
+- **邮箱**: rain11111112@gmail.com
 - **项目主页**: https://github.com/Rainllll/TinyRPC
-- **问题反馈**: https://github.com/Rainllll/TinyRPC/issues
 
 ---
 
